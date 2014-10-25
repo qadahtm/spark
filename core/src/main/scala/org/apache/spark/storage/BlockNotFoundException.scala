@@ -19,3 +19,8 @@ package org.apache.spark.storage
 
 
 class BlockNotFoundException(blockId: String) extends Exception(s"Block $blockId not found")
+// {
+//   def tableName: String
+//   def isPartitioned: Boolean = false
+//   def isStream: Boolean = false
+// }

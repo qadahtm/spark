@@ -31,16 +31,18 @@ object BuildCommons {
   private val buildLocation = file(".").getAbsoluteFile.getParentFile
 
   val allProjects@Seq(bagel, catalyst, core, graphx, hive, hiveThriftServer, mllib, repl,
-  sql, streaming, streamingFlumeSink, streamingFlume, streamingKafka, streamingMqtt,
+  sql, streaming, streamsql, //hiveStreamSql , 
+  streamingFlumeSink, streamingFlume, streamingKafka, streamingMqtt,
   streamingTwitter, streamingZeromq) =
     Seq("bagel", "catalyst", "core", "graphx", "hive", "hive-thriftserver", "mllib", "repl",
-      "sql", "streaming", "streaming-flume-sink", "streaming-flume", "streaming-kafka",
+      "sql", "streaming", "streamsql/core",
+      "streaming-flume-sink", "streaming-flume", "streaming-kafka",
       "streaming-mqtt", "streaming-twitter", "streaming-zeromq").map(ProjectRef(buildLocation, _))
 
   val optionallyEnabledProjects@Seq(yarn, yarnStable, yarnAlpha, java8Tests, sparkGangliaLgpl, sparkKinesisAsl) =
     Seq("yarn", "yarn-stable", "yarn-alpha", "java8-tests", "ganglia-lgpl", "kinesis-asl")
       .map(ProjectRef(buildLocation, _))
-
+      
   val assemblyProjects@Seq(assembly, examples) = Seq("assembly", "examples")
     .map(ProjectRef(buildLocation, _))
 
@@ -125,11 +127,38 @@ object SparkBuild extends PomBuild {
     publishMavenStyle in MavenCompile := true,
     publishLocal in MavenCompile <<= publishTask(publishLocalConfiguration in MavenCompile, deliverLocal),
     publishLocalBoth <<= Seq(publishLocal in MavenCompile, publishLocal).dependOn
+
+
   )
+
+  // lazy val maybeHive: Seq[ClasspathDependency] = if (isHiveEnabled) Seq(hive, hiveStreamSql) else Seq()
+  // lazy val maybeHiveRef: Seq[ProjectReference] = if (isHiveEnabled) Seq(hive, hiveStreamSql) else Seq()
+  
+  def streamSqlCoreSettings = sharedSettings ++ Seq(
+    name := "stream-sql"
+  )
+
+  def hiveStreamSqlSettings = sharedSettings ++ Hive.settings ++ Seq(
+    name := "stream-hive"
+  )
+
+ // lazy val streamsql = Project("stream-sql", file("streamsql/core"), settings = streamSqlCoreSettings) dependsOn(core, catalyst, sql, streaming)
+  //lazy val hiveStreamSql = Project("hive-stream-sql", file("streamsql/hive"), settings = hiveStreamSqlSettings) dependsOn(streamsql, hive) dependsOn(allExternal: _*)
+
+
+
 
   def enable(settings: Seq[Setting[_]])(projectRef: ProjectRef) = {
     val existingSettings = projectsMap.getOrElse(projectRef.project, Seq[Setting[_]]())
-    projectsMap += (projectRef.project -> (existingSettings ++ settings))
+    projectRef.project match {
+      case "streamsql" => {
+        projectsMap += (projectRef.project -> (existingSettings ++ settings ++ streamSqlCoreSettings))    
+      }
+      case _ => {
+        projectsMap += (projectRef.project -> (existingSettings ++ settings))        
+      }
+    }
+    
   }
 
   // Note ordering of these settings matter.
@@ -228,6 +257,11 @@ object SQL {
 object Hive {
 
   lazy val settings = Seq(
+    libraryDependencies ++= Seq(
+      "org.apache.hive" % "hive-metastore" % "0.12.0",
+      //"org.apache.hive" % "hive-exec" % "0.12.0",
+      "org.apache.hive" % "hive-serde" % "0.12.0"
+    ),
     javaOptions += "-XX:MaxPermSize=1g",
     // Multiple queries rely on the TestHive singleton. See comments there for more details.
     parallelExecution in Test := false,

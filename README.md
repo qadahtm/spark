@@ -1,6 +1,5 @@
-# Apache Spark
-
-Spark is a fast and general cluster computing system for Big Data. It provides
+StreamSQL
+===
 high-level APIs in Scala, Java, and Python, and an optimized engine that
 supports general computation graphs for data analysis. It also supports a
 rich set of higher-level tools including Spark SQL for SQL and structured
@@ -8,134 +7,102 @@ data processing, MLlib for machine learning, GraphX for graph processing,
 and Spark Streaming for stream processing.
 
 <http://spark.apache.org/>
-
-
-## Online Documentation
-
-You can find the latest Spark documentation, including a programming
-guide, on the project webpage at <http://spark.apache.org/documentation.html>.
-This README file only contains basic setup instructions.
-
-## Building Spark
-
-Spark is built on Scala 2.10. To build Spark and its example programs, run:
-
-    ./sbt/sbt assembly
-
 (You do not need to do this if you downloaded a pre-built package.)
 
-## Interactive Scala Shell
 
-The easiest way to start using Spark is through the Scala shell:
+StreamSQL is a Spark component based on [Catalyst](https://github.com/apache/spark/tree/master/sql) and [Spark Streaming](https://github.com/apache/spark/tree/master/streaming), aiming to support SQL-style queries on data streams. Our target is to advance the progress of Catalyst as well as Spark Streaming by bridging the gap between structured data queries and stream processing.
 
-    ./bin/spark-shell
+Our StreamSQL provides:
 
-Try the following command, which should return 1000:
+1. Full SQL support on streaming data and extended time-based aggregation and join.
+2. Easy mutual operation between DStream and SQL.
+3. Table and stream mutual operation with a simple query.
 
-    scala> sc.parallelize(1 to 1000).count()
+### An Example ###
 
-## Interactive Python Shell
+**Creating StreamSQLContext**
 
-Alternatively, if you prefer Python, you can use the Python shell:
-
-    ./bin/pyspark
-    
-And run the following command, which should also return 1000:
-
-    >>> sc.parallelize(range(1000)).count()
-
-## Example Programs
-
-Spark also comes with several sample programs in the `examples` directory.
-To run one of them, use `./bin/run-example <class> [params]`. For example:
-
-    ./bin/run-example SparkPi
-
-will run the Pi example locally.
-
-You can set the MASTER environment variable when running examples to submit
+`StreamSQLContext` is the entry point for all DStream related functionalities. It is the counterpart of `SQLContext` for Spark. `StreamingContext` can be created as below.
 examples to a cluster. This can be a mesos:// or spark:// URL, 
 "yarn-cluster" or "yarn-client" to run on YARN, and "local" to run 
 locally with one thread, or "local[N]" to run locally with N threads. You 
 can also use an abbreviated class name if the class is in the `examples`
 package. For instance:
 
-    MASTER=spark://host:7077 ./bin/run-example SparkPi
+    val ssc: StreamingContext
+    val streamSqlContext = new StreamSQLContext(ssc)
 
-Many of the example programs print usage help if no params are given.
+    import streamSqlContext._
 
-## Running Tests
+**Running SQL on DStreams:**
 
-Testing first requires [building Spark](#building-spark). Once Spark is built, tests
-can be run using:
+    case class Person(name: String, age: String)
 
-    ./dev/run-tests
+    // Create an DStream of Person objects and register it as a stream.
+    val people: DStream[Person] = ssc.socketTextStream(serverIP, serverPort)
+      .map(_.split(","))
+      .map(p => Person(p(0), p(1).toInt))
 
-## A Note About Hadoop Versions
+    people.registerAsStream("people")
 
-Spark uses the Hadoop core library to talk to HDFS and other Hadoop-supported
-storage systems. Because the protocols have changed in different versions of
-Hadoop, you must build Spark against the same version that your cluster runs.
-You can change the version by setting `-Dhadoop.version` when building Spark.
+    val teenagers = sql("SELECT name FROM people WHERE age >= 10 && age <= 19")
 
-For Apache Hadoop versions 1.x, Cloudera CDH MRv1, and other Hadoop
-versions without YARN, use:
+    // The results of SQL queries are themselves DStreams and support all the normal operations
+    teenagers.map(t => "Name: " + t(0)).print()
+    ssc.start()
+    ssc.awaitTermination()
+    ssc.stop()
 
-    # Apache Hadoop 1.2.1
-    $ sbt/sbt -Dhadoop.version=1.2.1 assembly
+**Join Stream with Table**
 
-    # Cloudera CDH 4.2.0 with MapReduce v1
-    $ sbt/sbt -Dhadoop.version=2.0.0-mr1-cdh4.2.0 assembly
+    val sqlContext = streamSqlContext.sqlContext
 
-For Apache Hadoop 2.2.X, 2.1.X, 2.0.X, 0.23.x, Cloudera CDH MRv2, and other Hadoop versions
-with YARN, also set `-Pyarn`:
+    val historyData = sc.textFile("persons").map(_.split(",")).map(p => Person(p(0), p(1).toInt))
+    val schemaData = sqlContext.createSchemaRDD(historyData)
+    schemaData.registerAsTable("records")
 
-    # Apache Hadoop 2.0.5-alpha
-    $ sbt/sbt -Dhadoop.version=2.0.5-alpha -Pyarn assembly
+    val result = sql("SELECT * FROM records JOIN people ON people.name = records.name")
+    result.print()
+    ssc.start()
+    ssc.awaitTermination()
+    ssc.stop()
 
-    # Cloudera CDH 4.2.0 with MapReduce v2
-    $ sbt/sbt -Dhadoop.version=2.0.0-cdh4.2.0 -Pyarn assembly
+**Writing Language Integrated Relational Queries:**
 
-    # Apache Hadoop 2.2.X and newer
-    $ sbt/sbt -Dhadoop.version=2.2.0 -Pyarn assembly
+    val teenagers = people.where('age >= 10).where('age <= 19).select('name).toDstream
 
-When developing a Spark application, specify the Hadoop version by adding the
-"hadoop-client" artifact to your project's dependencies. For example, if you're
-using Hadoop 1.2.1 and build your application using SBT, add this entry to
-`libraryDependencies`:
+**Combining Hive**
 
-    "org.apache.hadoop" % "hadoop-client" % "1.2.1"
+    val ssc: StreamingContext
+    val streamHiveContext = new StreamHiveContext(ssc)
 
-If your project is built with Maven, add this to your POM file's `<dependencies>` section:
+    import streamHiveContext._
 
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-client</artifactId>
-      <version>1.2.1</version>
-    </dependency>
+    streamHiveContext.streamHql(
+      """
+        |CREATE STREAM IF NOT EXISTS src (
+        |     key STRING,
+        |     value INT)
+        |ROW FORMAT DELIMITED
+        |   FIELDS TERMINATED BY ' '
+        |STORED AS
+        |  INPUTFORMAT 'org.apache.hadoop.mapred.TextKafkaInputFormat'
+        |  OUTPUTFORMAT 'org.apache.hadoop.mapred.DummyStreamOutputFormat'
+        |LOCATION 'kafka://localhost:2181/topic=test/group=aa'
+      """.stripMargin)
 
+    sql("SELECT key, value FROM src").print()
+    ssc.start()
+    ssc.awaitTermination()
+    ssc.stop()
 
-## A Note About Thrift JDBC server and CLI for Spark SQL
+### How To Build and Deploy ###
 
-Spark SQL supports Thrift JDBC server and CLI.
-See sql-programming-guide.md for more information about using the JDBC server and CLI.
-You can use those features by setting `-Phive` when building Spark as follows.
+StreamSQL is fully based on [Spark](http://spark.apache.org/), to build and deploy please refer to
+[Spark document](http://spark.apache.org/documentation.html).
 
-    $ sbt/sbt -Phive  assembly
+### Future List ###
 
-## Configuration
+1. Support time-based window slicing on data.
 
-Please refer to the [Configuration guide](http://spark.apache.org/docs/latest/configuration.html)
-in the online documentation for an overview on how to configure Spark.
-
-
-## Contributing to Spark
-
-Contributions via GitHub pull requests are gladly accepted from their original
-author. Along with any pull requests, please state that the contribution is
-your original work and that you license the work to the project under the
-project's open source license. Whether or not you state this explicitly, by
-submitting any copyrighted material via pull request, email, or other means
-you agree to license the material under the project's open source license and
-warrant that you have the legal authority to do so.
-
+Details please refer to [design document](https://github.com/thunderain-project/StreamSQL/wiki).
