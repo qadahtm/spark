@@ -287,7 +287,7 @@ private[hive] object HiveQl {
     }
   }
 
-  protected def getClauses(clauseNames: Seq[String], nodeList: Seq[ASTNode]): Seq[Option[Node]] = {
+  def getClauses(clauseNames: Seq[String], nodeList: Seq[ASTNode]): Seq[Option[Node]] = {
     var remainingNodes = nodeList
     val clauses = clauseNames.map { clauseName =>
       val (matches, nonMatches) = remainingNodes.partition(_.getText.toUpperCase == clauseName)
@@ -848,7 +848,7 @@ private[hive] object HiveQl {
 
   protected val escapedIdentifier = "`([^`]+)`".r
   /** Strips backticks from ident if present */
-  protected def cleanIdentifier(ident: String): String = ident match {
+  def cleanIdentifier(ident: String): String = ident match {
     case escapedIdentifier(i) => i
     case plainIdent => plainIdent
   }
